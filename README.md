@@ -12,6 +12,12 @@
 sudo apt install build-essential qemu-system-x86
 ```
 
+## Project notes
+
+We leave some technical notes we wrote about the assignments that you can find useful.
+
+They are located in the [notes/](./notes/) directory.
+
 ## System setup
 
 There's an `env` file we wrote file that provides you several utilities that you can call
