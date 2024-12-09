@@ -1,4 +1,6 @@
 .bash_history
 .vscode
-env
 toolchain/
+src/examples/**/*.o
+src/examples/**/*.a
+src/userprog/*.dsk
