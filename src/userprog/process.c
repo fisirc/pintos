@@ -36,9 +36,19 @@ process_execute (const char *file_name)
   fn_copy = palloc_get_page (0);
   if (fn_copy == NULL)
     return TID_ERROR;
+
+  // 👤 project2/userprog
+  // We copy the content of [file_name] because we are about to modify
+  // it for parsing the command name
   strlcpy (fn_copy, file_name, PGSIZE);
 
   /* Create a new thread to execute FILE_NAME. */
+  // 👤 project2/userprog
+  // - [file_name] got a \0 inserted to delimit the command name
+  // - [fn_copy] still has the original value of [file_name]
+  char *save_ptr;
+  strtok_r (file_name, " ", &save_ptr);
+
   tid = thread_create (file_name, PRI_DEFAULT, start_process, fn_copy);
   if (tid == TID_ERROR)
     palloc_free_page (fn_copy);
@@ -50,6 +60,8 @@ process_execute (const char *file_name)
 static void
 start_process (void *file_name_)
 {
+  // 👤 project2/userprog
+  // We store the [file_name_] in order to free it later
   char *file_name = file_name_;
   struct intr_frame if_;
   bool success;
@@ -59,7 +71,11 @@ start_process (void *file_name_)
   if_.gs = if_.fs = if_.es = if_.ds = if_.ss = SEL_UDSEG;
   if_.cs = SEL_UCSEG;
   if_.eflags = FLAG_IF | FLAG_MBS;
-  success = load (file_name, &if_.eip, &if_.esp);
+  success = load (file_name_, &if_.eip, &if_.esp);
+
+  // 👤 project2/userprog
+  // Debugging the stack
+  hex_dump((uintptr_t)if_.esp, if_.esp, PHYS_BASE - if_.esp, true);
 
   /* If load failed, quit. */
   palloc_free_page (file_name);
@@ -196,6 +212,10 @@ struct Elf32_Phdr
 #define PF_R 4          /* Readable. */
 
 static bool setup_stack (void **esp);
+/* 👤 project2/userprog
+   We add the [push_prog_arguments] function to push the program arguments
+   to the stack before executing it */
+static bool push_prog_arguments (char** parse, void **esp);
 static bool validate_segment (const struct Elf32_Phdr *, struct file *);
 static bool load_segment (struct file *file, off_t ofs, uint8_t *upage,
                           uint32_t read_bytes, uint32_t zero_bytes,
@@ -222,10 +242,12 @@ load (const char *file_name, void (**eip) (void), void **esp)
   process_activate ();
 
   /* Open executable file. */
-  file = filesys_open (file_name);
+  // 👤 project2/userprog
+  // The file name to execute is stored in the thread name
+  file = filesys_open (t->name);
   if (file == NULL)
     {
-      printf ("load: %s: open failed\n", file_name);
+      printf ("load: %s: open failed\n", t->name);
       goto done;
     }
 
@@ -238,7 +260,7 @@ load (const char *file_name, void (**eip) (void), void **esp)
       || ehdr.e_phentsize != sizeof (struct Elf32_Phdr)
       || ehdr.e_phnum > 1024)
     {
-      printf ("load: %s: error loading executable\n", file_name);
+      printf ("load: %s: error loading executable\n", t->name);
       goto done;
     }
 
@@ -303,6 +325,11 @@ load (const char *file_name, void (**eip) (void), void **esp)
 
   /* Set up stack. */
   if (!setup_stack (esp))
+    goto done;
+
+  // 👤 project2/userprog
+  // Once the stack is setup, we push the arguments
+  if (!push_prog_arguments (file_name, esp))
     goto done;
 
   /* Start address. */
@@ -442,6 +469,14 @@ setup_stack (void **esp)
         palloc_free_page (kpage);
     }
   return success;
+}
+
+/* 👤 project2/userprog
+   We add the [push_prog_arguments] function to push the program arguments
+   to the stack before executing it */
+static bool
+push_prog_arguments (char** parse, void **esp) {
+  // noop
 }
 
 /* Adds a mapping from user virtual address UPAGE to kernel
