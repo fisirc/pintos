@@ -217,7 +217,7 @@ static bool setup_stack (void **esp);
 /* 👤 project2/userprog
    We add the [push_prog_arguments] function to push the program arguments
    to the stack before executing it */
-static bool push_prog_arguments (char** parse, void **esp);
+static bool push_prog_arguments (char* parse, void **esp);
 static bool validate_segment (const struct Elf32_Phdr *, struct file *);
 static bool load_segment (struct file *file, off_t ofs, uint8_t *upage,
                           uint32_t read_bytes, uint32_t zero_bytes,
@@ -466,7 +466,7 @@ setup_stack (void **esp)
     {
       success = install_page (((uint8_t *) PHYS_BASE) - PGSIZE, kpage, true);
       if (success)
-        *esp = PHYS_BASE;
+        *esp = PHYS_BASE - 12;
       else
         palloc_free_page (kpage);
     }
@@ -477,7 +477,7 @@ setup_stack (void **esp)
    We add the [push_prog_arguments] function to push the program arguments
    to the stack before executing it */
 static bool
-push_prog_arguments (char** parse, void **esp) {
+push_prog_arguments (char* parse, void **esp) {
   // noop
 }
 
