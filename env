@@ -1,0 +1,212 @@
+#!/bin/bash
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+project_dir="userprog"
+
+if ! [ -d "$repo_root/src/$project_dir" ]; then
+    echo "Invalid project directory: '$project_dir'"
+    unset repo_root
+    unset project_dir
+    return
+fi
+
+# --- Utilities ---
+
+# Returns the absolut path of the given file
+function __abspath {
+    # If is directory
+    if [ -d "$1" ]; then
+        cd "$1" >/dev/null; pwd -P
+        return
+    fi
+    # If is file
+    if [ -f "$1" ]; then
+        echo "$(cd "$(dirname -- "$1")" >/dev/null; pwd -P)/$(basename -- "$1")"
+        return
+    fi
+    echo "File not found :3 $1"
+    exit 1
+}
+
+# Adds the argument to PATH, if not already there
+function __pathadd {
+    if [ -d "$1" ] && [[ ":$PATH:" != *":$1:"* ]]; then
+        PATH="${PATH:+"$PATH:"}$1"
+    fi
+}
+
+# --- Bootstraping ---
+
+# Adds utils/ to PATH
+__pathadd "$repo_root/toolchain/x86_64/bin"
+
+# --- Actual funcionality ---
+
+function recompile {
+    pushd $project_dir
+    make
+    popd >/dev/null
+}
+
+# Invoques the pintos 'run' subcommand
+function run {
+    pushd $repo_root/src/$project_dir
+    make
+    pintos --qemu -- run "$@"
+    # -v == --no-vga
+
+    popd >/dev/null
+
+    # See 1.1.4 Debugging versus Testing
+    # for how to invoque pintos in reproducible mode (-j seed [Bochs only])
+}
+
+# Compiles and runs the given user program example from src/examples
+#
+# See the last step in
+# <https://pkuflyingpig.gitbook.io/pintos/project-description/lab2-user-programs/background#create-your-simulated-disk-file-system>
+function runexample {
+    pushd $repo_root/src/examples
+    make
+
+    if [ $? -ne 0 ]; then
+        echo "Error compiling examples"
+        popd >/dev/null
+        return
+    fi
+
+    example=$1
+    shift
+
+    args=$([ -z $@ ] && echo -n "" || echo -n " $@")
+
+    pintos -v --filesys-size=2 -p $repo_root/src/examples/$example -a $example -- -f -q run "$example$args"
+    popd >/dev/null
+}
+
+function tests {
+    # See 1.2.1 Testing
+    pushd $repo_root/src/$project_dir
+    make check VERBOSE=1 SIMULATOR=--qemu PINTOSOPTS=''
+    popd >/dev/null
+}
+
+# Removes all the functionality added by this eval script
+function revert {
+    unset -f reload
+    unset -f recompile
+    unset -f run
+    unset -f tests
+    unset -f revert
+    unset -f __abspath
+    unset -f __pathadd
+    cd $repo_root
+    unset repo_root
+    unset -v repo_root
+}
+
+# Reloads this env file
+function reload {
+    revert
+    source env
+}
+
+# Wrapper for the actual utils/pintos binary to recompile on each run
+function pintos {
+    pushd $repo_root/src/$project_dir
+    make
+
+    if [ $? -ne 0 ]; then
+        echo "❌ Error compiling pintos"
+        popd >/dev/null
+        return
+    fi
+
+    $repo_root/toolchain/x86_64/bin/pintos "$@"
+    popd >/dev/null
+}
+
+# Wrapper for the actual utils/pintos binary to recompile on each run
+function pintosgdb {
+    pushd $repo_root/src/$project_dir/build/
+    make
+    popd >/dev/null
+
+    $repo_root/toolchain/x86_64/bin/pintos-gdb $repo_root/src/$project_dir/build/kernel.o
+}
+
+# Creates a simulated disk with a file system partition
+# See <https://pkuflyingpig.gitbook.io/pintos/project-description/lab2-user-programs/background#create-your-simulated-disk-file-system>
+function mkdisk {
+    pushd $repo_root/src/$project_dir
+
+    rm $repo_root/src/$project_dir/filesys.dsk 2> /dev/null
+    pintos-mkdisk filesys.dsk --filesys-size=2
+    echo filesys.dsk created in $repo_root/src/$project_dir
+
+    popd >/dev/null
+}
+
+# Formats the disk with the pintos file system
+function formatdisk {
+    pushd $repo_root/src/$project_dir
+    pintos -v -- -f -q
+    popd >/dev/null
+}
+
+# Copies a file of the host system into the pintos file system
+# Before executing this command you must have created the disk image with
+#   mkdisk
+# and formatted it with
+#   formatdisk
+# Usage:
+#   Copy a file from the host system to the pintos file system
+#     pintoscp <file> [newname]
+#   Copy a file from the pintos file system to the host system
+#     pintoscp pintos:<file> [newname]
+
+# For a complete guide see:
+# <https://pkuflyingpig.gitbook.io/pintos/project-description/lab2-user-programs/background#create-your-simulated-disk-file-system>
+function pintoscp {
+    if [ -z "$1" ]; then
+        echo "Usage: pintoscp [pintos:]<file> [newname]"
+        return
+    fi
+
+    case $1 in "pintos:"*)
+        pintos_name=${1#"pintos:"}
+        destination=""
+
+        if [ -n "$2" ]; then
+            destination=$2
+        else
+            destination=$(basename $pintos_name)
+        fi
+
+        cwd=$(pwd)
+        pintos -v --get-file $pintos_name -a $cwd/$destination -- -q
+        ;;
+    *)
+        pintos_name=""
+        if [ -n "$2" ]; then
+            pintos_name=$2
+        else
+            pintos_name=$1
+        fi
+
+        tocopy=$(__abspath $1)
+
+        pintos -v --put-file $tocopy -a $pintos_name -- -q
+        ;;
+    esac
+}
+
+# Removes a file from the pintos file system
+function pintosrm {
+    if [ -z "$1" ]; then
+        echo "Usage: pintosrm <file>"
+        return
+    fi
+
+    pintos -v -- -q rm $1
+}

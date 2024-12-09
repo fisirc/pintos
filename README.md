@@ -13,11 +13,15 @@ sudo apt install build-essential qemu-system-x86
 ```
 
 ## System setup
-<!--
+
+There's an `env` file we wrote file that provides you several utilities that you can call
+directly from your terminal:
+
 ```bash
-source ./env.sh
+source env
 ```
--->
+
+For docker users:
 
 ```bash
 docker compose up --build
@@ -66,6 +70,8 @@ dumplist &sleep_list thread allelem
 ```
 
 ## File structure
+
+Pintos entry point is located in [`src/threads/init.c#main`](./src/threads/init.c).
 
 - `threads/`
 
