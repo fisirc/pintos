@@ -1,6 +1,10 @@
 #ifndef THREADS_THREAD_H
 #define THREADS_THREAD_H
 
+#ifndef USERPROG
+#define USERPROG
+#endif
+
 #include <debug.h>
 #include <list.h>
 #include <stdint.h>
@@ -24,6 +28,25 @@ typedef int tid_t;
 #define PRI_MIN 0                       /* Lowest priority. */
 #define PRI_DEFAULT 31                  /* Default priority. */
 #define PRI_MAX 63                      /* Highest priority. */
+
+/* 👤 project2/userprog
+   Process Control Block (PCB)
+   Created to store general information about the process that
+   is not thread-specific. */
+struct pcb
+  {
+    int exit_code;
+    bool has_exited;
+    bool has_loaded;
+
+    struct file **fd_table; // File descriptor table
+    int fd_count;           // Number of file descriptors
+    struct file *exec_file;   // A reference to the opened executable
+                            // of the process
+
+    struct semaphore sema_wait; // Waiter for the process to finish
+    struct semaphore sema_load; // Waiter for the process to be loaded
+  };
 
 /* A kernel thread or user process.
 
@@ -119,6 +142,12 @@ struct thread
 #ifdef USERPROG
     /* Owned by userprog/process.c. */
     uint32_t *pagedir;                  /* Page directory. */
+    struct pcb *pcb;                    /* 👤 project2/userprog
+                                           Process Control Block, stores
+                                           information about the process */
+    struct thread *parent_process;
+    struct list list_child_process;
+    struct list_elem elem_child_process;
 #endif
 
     /* Owned by thread.c. */
@@ -181,5 +210,9 @@ int thread_get_nice (void);
 void thread_set_nice (int);
 int thread_get_recent_cpu (void);
 int thread_get_load_avg (void);
+
+/* 👤 project2/userprog */
+
+struct thread *thread_get_child (tid_t child_tid);
 
 #endif /* threads/thread.h */

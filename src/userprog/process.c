@@ -17,7 +17,6 @@
 #include "threads/palloc.h"
 #include "threads/thread.h"
 #include "threads/vaddr.h"
-#include "devices/timer.h"
 
 static thread_func start_process NO_RETURN;
 static bool load (const char *cmdline, void (**eip) (void), void **esp);
@@ -29,7 +28,7 @@ static bool load (const char *cmdline, void (**eip) (void), void **esp);
 tid_t
 process_execute (const char *file_name)
 {
-  char *fn_copy, *fn_cmd;
+  char *fn_copy, *parsed_fn;
   tid_t tid;
 
   /* Make a copy of FILE_NAME.
@@ -39,24 +38,25 @@ process_execute (const char *file_name)
     return TID_ERROR;
   strlcpy (fn_copy, file_name, PGSIZE);
 
-  fn_cmd = palloc_get_page (0);
-  if (fn_cmd == NULL)
+  parsed_fn = palloc_get_page (0);
+  if (parsed_fn == NULL) {
     return TID_ERROR;
-  strlcpy (fn_cmd, file_name, PGSIZE);
+  }
 
-  /* Create a new thread to execute FILE_NAME. */
-  // 👤 project2/userprog
-  // parsed_fn: constains command and arguments
-  // e.g. "echo x y z"
-  // with strtok_r, we transform the first space into a null character
-  // so we can get the command separated from the arguments
-  // parsed_fn will become "echo\0"
+  strlcpy (parsed_fn, file_name, PGSIZE);
+
+  /* Create a new thread to execute PARSED_FN. */
   char *save_ptr;
-  strtok_r (fn_cmd, " ", &save_ptr);
+  parsed_fn = strtok_r (parsed_fn, " ", &save_ptr);
 
-  tid = thread_create (fn_cmd, PRI_DEFAULT, start_process, fn_copy);
+  tid = thread_create (parsed_fn, PRI_DEFAULT, start_process, fn_copy);
+
   if (tid == TID_ERROR)
     palloc_free_page (fn_copy);
+  else
+    sema_down (&(thread_get_child (tid)->pcb->sema_load));
+
+  palloc_free_page (parsed_fn);
   return tid;
 }
 
@@ -78,16 +78,21 @@ start_process (void *file_name_)
   // 👤 project2/userprog
   // Allocate memory for arguments
   char **argv = palloc_get_page(0);
-  int argc = process_parse_cmd(file_name, argv);
+  int argc = process_parse_args(file_name, argv);
+
   success = load (argv[0], &if_.eip, &if_.esp);
   if (success)
     process_init_stack_args (argv, argc, &if_.esp);
+
   palloc_free_page (argv);
 
   /* If load failed, quit. */
   palloc_free_page (file_name);
+
+  sema_up (&(thread_current ()->pcb->sema_load));
+
   if (!success)
-    thread_exit ();
+    sys_exit (-1);
 
   /* Start the user process by simulating a return from an
      interrupt, implemented by intr_exit (in
@@ -109,10 +114,26 @@ start_process (void *file_name_)
    This function will be implemented in problem 2-2.  For now, it
    does nothing. */
 int
-process_wait (tid_t child_tid UNUSED)
+process_wait (tid_t child_tid)
 {
-  timer_msleep (300);
-  return -1;
+  struct thread *child = thread_get_child (child_tid);
+  int exit_code;
+
+  if (child == NULL)
+    return -1;
+
+  if (child->pcb == NULL || child->pcb->exit_code == -2 || !child->pcb->has_loaded) {
+    return -1;
+  }
+
+  sema_down (&(child->pcb->sema_wait));
+  exit_code = child->pcb->exit_code;
+
+  list_remove (&(child->elem_child_process));
+  palloc_free_page (child->pcb);
+  palloc_free_page (child);
+
+  return exit_code;
 }
 
 /* Free the current process's resources. */
@@ -121,6 +142,14 @@ process_exit (void)
 {
   struct thread *cur = thread_current ();
   uint32_t *pd;
+  int i;
+
+  // 👤 project2/userprog
+  for (i = cur->pcb->fd_count - 1; i > 1; i--)
+  {
+    sys_close (i);
+  }
+  palloc_free_page (cur->pcb->fd_table);
 
   /* Destroy the current process's page directory and switch back
      to the kernel-only page directory. */
@@ -138,6 +167,9 @@ process_exit (void)
       pagedir_activate (NULL);
       pagedir_destroy (pd);
     }
+
+  cur->pcb->has_exited = true;
+  sema_up (&(cur->pcb->sema_wait));
 }
 
 /* Sets up the CPU for running user code in the current
@@ -162,9 +194,10 @@ process_activate (void)
   argv[n] will contain the nth argument
 */
 int
-process_parse_cmd (char *cmd, char **argv)
+process_parse_args (char *cmd, char **argv)
 {
   char *token, *save_ptr;
+
   int argc = 0;
 
   for (
@@ -184,12 +217,9 @@ process_parse_cmd (char *cmd, char **argv)
    argc: number of arguments
    argv: array of [argc] arguments
    esp: stack pointer
-
    This works by pushing the arguments into the stack following the
    argument passing convention starting from the top.
-
    f (1, 2, 3)
-
                                 +----------------+
                      0xbffffe7c |        3       |
                      0xbffffe78 |        2       |
@@ -199,35 +229,30 @@ process_parse_cmd (char *cmd, char **argv)
 void
 process_init_stack_args (char **argv, int argc, void **esp)
 {
-  // First we push the arguments data one by one, separated by sentinel
-  // null characters
-  int i;
-  int argv_len;
-  int len;
+  /* Push ARGV[i][...] */
+  int total_args_len;
 
-  for (i = argc - 1, argv_len = 0; i >= 0; i--)
+  for (int i = argc - 1, total_args_len = 0; i >= 0; i--)
     {
-      len = strlen (argv[i]) + 1; // plus \0
+      int len = strlen (argv[i]) + 1; // plus \0
       *esp -= len;
-      argv_len += len;
+      total_args_len += len;
       strlcpy (*esp, argv[i], len);
       argv[i] = *esp;
     }
 
   // And we align the data to 4 bytes as required by the convention
-  if (argv_len % 4 != 0)
-    {
-      *esp -= 4 - (argv_len % 4);
-    }
+  if (total_args_len % 4)
+    *esp -= 4 - (total_args_len % 4);
 
   /* Now we start with the argv pointers */
 
-  // As defined by the C standard, argv[argc] must be null
+  /* Push null. */
   *esp -= 4;
   **(uint32_t **)esp = 0;
 
   // And we push the pointers one by one, in reverse order
-  for(i = argc - 1; i >= 0; i--)
+  for(int i = argc - 1; i >= 0; i--)
     {
       *esp -= 4;
       **(uint32_t **)esp = argv[i];
@@ -245,8 +270,7 @@ process_init_stack_args (char **argv, int argc, void **esp)
   *esp -= 4;
   **(uint32_t **)esp = 0;
 }
-
-
+
 /* We load ELF binaries.  The following definitions are taken
    from the ELF specification, [ELF1], more-or-less verbatim.  */
 
@@ -344,6 +368,8 @@ load (const char *file_name, void (**eip) (void), void **esp)
       goto done;
     }
 
+  t->pcb->exec_file = file;
+
   /* Read and verify executable header. */
   if (file_read (file, &ehdr, sizeof ehdr) != sizeof ehdr
       || memcmp (ehdr.e_ident, "\177ELF\1\1\1", 7)
@@ -424,6 +450,7 @@ load (const char *file_name, void (**eip) (void), void **esp)
   *eip = (void (*) (void)) ehdr.e_entry;
 
   success = true;
+  t->pcb->has_loaded = true;
 
  done:
   /* We arrive here whether the load is successful or not. */

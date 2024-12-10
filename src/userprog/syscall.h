@@ -10,10 +10,10 @@ typedef int pid_t;
 
 void syscall_init (void);
 
-void get_arguments (int *esp, int *arg, int count);
-bool is_valid_uaddr (void * addr);
-
 /* 👤 project2/userprog */
+
+void get_syscall_args (int *esp, int *arg, int count);
+bool is_valid_uaddr (void * addr);
 
 void sys_halt (void);
 void sys_exit (int status);

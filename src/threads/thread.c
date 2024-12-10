@@ -265,6 +265,36 @@ thread_create (const char *name, int priority,
   sf->eip = switch_entry;
   sf->ebp = 0;
 
+  // 👤 project2/userprog
+  // We define a process hierarchy, where the parent process is the
+  // current thread (caller) and the child process is the created thread.
+  t->parent_process = thread_current ();
+  t->pcb = palloc_get_page (0);
+
+  if (t->pcb == NULL)
+    return TID_ERROR;
+
+  /* 👤 project2/userprog */
+
+  // The list of file descriptors opened by the process
+  t->pcb->fd_table = palloc_get_page (PAL_ZERO);
+  if (t->pcb->fd_table == NULL) {
+    palloc_free_page (t->pcb);
+    return TID_ERROR;
+  }
+
+  // And other PCB fields
+  t->pcb->fd_count = 2; // 0 and 1 are reserved for stdin and stdout
+  t->pcb->exit_code = -1; // not yet
+  t->pcb->exec_file = NULL; // threads are not opened from a file
+  t->pcb->has_exited = false;
+  t->pcb->has_loaded = false;
+  sema_init (&(t->pcb->sema_wait), 0);
+  sema_init (&(t->pcb->sema_load), 0);
+
+  // And finally we add the child to the parent's child list
+  list_push_back (&(t->parent_process->list_child_process), &(t->elem_child_process));
+
   /* Add to run queue. */
   thread_unblock (t);
 
@@ -319,6 +349,8 @@ thread_unblock (struct thread *t)
 
   t->status = THREAD_READY;
   intr_set_level (old_level);
+
+  list_init(&(t->list_child_process));
 }
 
 /* Returns the name of the running thread. */
@@ -753,6 +785,9 @@ init_thread (struct thread *t, const char *name, int priority)
   old_level = intr_disable ();
   list_push_back (&all_list, &t->allelem);
   intr_set_level (old_level);
+
+  // 👤 project2/userprog fields initialization
+  list_init(&(t->list_child_process));
 }
 
 /* Allocates a SIZE-byte frame at the top of thread T's stack and
@@ -864,7 +899,28 @@ allocate_tid (void)
 
   return tid;
 }
-
+
 /* Offset of `stack' member within `struct thread'.
    Used by switch.S, which can't figure it out on its own. */
 uint32_t thread_stack_ofs = offsetof (struct thread, stack);
+
+/* 👤 project2/userprog
+   Returns the child of id [child_tid] of the current process */
+struct thread *
+thread_get_child (tid_t child_tid)
+{
+  struct thread *t = thread_current ();
+  struct thread *child;
+  struct list *child_list = &(t->list_child_process);
+  struct list_elem *e;
+
+  // Iterate and find by thread id
+  for (e = list_begin (child_list); e != list_end (child_list); e = list_next (e))
+  {
+    child = list_entry (e, struct thread, elem_child_process);
+    if (child->tid == child_tid)
+      return child;
+  }
+
+  return NULL;
+}
