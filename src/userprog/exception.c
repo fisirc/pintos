@@ -4,6 +4,9 @@
 #include "userprog/gdt.h"
 #include "threads/interrupt.h"
 #include "threads/thread.h"
+#include "vm/page.h"
+#include "vm/swap.h"
+#include "threads/palloc.h"
 
 /* Number of page faults processed. */
 static long long page_fault_cnt;
@@ -127,6 +130,14 @@ page_fault (struct intr_frame *f)
   bool user;         /* True: access by user, false: access by kernel. */
   void *fault_addr;  /* Fault address. */
 
+/* 🧠 project3/vm */
+  void *upage;       /* pointer to the user page */
+  void *esp;         /* pointer to the stack pointer */
+  struct hash *spt;  /* pointer to the supplemental page table (hash table */
+  struct spte *spe;  /* pointer to the supplemental page table entry */
+
+  void *kpage;       /* pointer to the kernel page */
+
   /* Obtain faulting address, the virtual address that was
      accessed to cause the fault.  It may point to code or to
      data.  It is not necessarily the address of the instruction
@@ -151,6 +162,26 @@ page_fault (struct intr_frame *f)
   not_present = (f->error_code & PF_P) == 0;
   write = (f->error_code & PF_W) != 0;
   user = (f->error_code & PF_U) != 0;
+
+  // 🧠 project3/vm
+  // get the user page and the supplemental page table
+  upage = pg_round_down (fault_addr);
+  if (is_kernel_vaddr (fault_addr) || !not_present)
+     sys_exit (-1);
+
+  spt = &thread_current ()->spt;
+  spe = get_spte (spt, upage);
+  esp = user ? f->esp : thread_current ()->esp;
+
+  if (esp - 32 <= fault_addr && PHYS_BASE - MAX_STACK_SIZE <= fault_addr) {
+     if (!get_spte (spt, upage)) // if the page is not in the supplemental page table
+        init_zero_spte (spt, upage); // initialize the page with zeros
+  }
+
+  if (load_page (spt, upage))
+     return;
+
+  sys_exit (-1);
 
   /* To implement virtual memory, delete the rest of the function
      body, and replace it with code that brings in the page to
