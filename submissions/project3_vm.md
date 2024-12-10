@@ -97,7 +97,10 @@ get_spte (struct hash *spt, void *upage)
   return elem != NULL ? hash_entry (elem, struct spte, hash_elem) : NULL;
 }
 ```
-The get_spte() function retrieves the Supplemental Page Table entry for a given user page (upage). It creates a temporary spte with the upage, searches for it in the hash table using hash_find(), and returns the corresponding spte if found. If not found, it returns NULL.
+The `get_spte()` function retrieves the Supplemental Page Table entry for
+a given user page (upage). It creates a temporary spte with the upage,
+searches for it in the hash table using hash_find(), and returns the
+corresponding spte if found. If not found, it returns NULL.
 
 > **A3:** How does your code coordinate accessed and dirty bits between
 > kernel and user virtual addresses that alias a single frame, or
@@ -155,7 +158,9 @@ It also adds lookup efficiency, as we used a hash table to store the SPTEs,
 ```c
 // File: threads/thread.h
 struct thread {
-    void *esp;
+  // ...
+    void *esp; // Stack pointer.
+  // ...
 }
 ```
 
