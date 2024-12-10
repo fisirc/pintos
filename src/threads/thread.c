@@ -15,6 +15,8 @@
 #ifdef USERPROG
 #include "userprog/process.h"
 #endif
+#include "filesys/file.h"
+#include "vm/page.h"
 
 /* Random value for struct thread's `magic' member.
    Used to detect stack overflow.  See the big comment at the top
@@ -295,6 +297,9 @@ thread_create (const char *name, int priority,
   // And finally we add the child to the parent's child list
   list_push_back (&(t->parent_process->list_child_process), &(t->elem_child_process));
 
+  //🧠 project3/vm: initialize the supplemental page table for the new thread
+  init_spt (&t->spt);
+
   /* Add to run queue. */
   thread_unblock (t);
 
@@ -318,6 +323,7 @@ thread_create (const char *name, int priority,
 void
 thread_block (void)
 {
+
   ASSERT (!intr_context ());
   ASSERT (intr_get_level () == INTR_OFF);
 

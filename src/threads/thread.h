@@ -10,6 +10,9 @@
 #include <stdint.h>
 #include "threads/synch.h"
 
+#include "synch.h"
+#include <hash.h>
+
 /* States in a thread's life cycle. */
 enum thread_status
   {
@@ -149,6 +152,9 @@ struct thread
     struct list list_child_process;
     struct list_elem elem_child_process;
 #endif
+    struct hash spt;                   /* 🧠 project3/vm
+                                           Supplemental page table */
+    void *esp;
 
     /* Owned by thread.c. */
     unsigned magic;                     /* Detects stack overflow. */
