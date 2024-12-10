@@ -6,10 +6,11 @@
 #include "filesys/filesys.h"
 #include "filesys/file.h"
 #include "threads/synch.h"
+#include "vm/page.h"
+#include "threads/vaddr.h"
 
 static void syscall_handler (struct intr_frame *);
 struct lock file_lock;
-
 int read_count;
 
 void
@@ -82,6 +83,7 @@ syscall_handler (struct intr_frame *f)
   if (!is_valid_uaddr (f->esp))
     sys_exit (-1);
 
+  thread_current()->esp = f->esp; // 🧠 project3/vm: save the esp for page fault handling
   int argv[3]; // at most 3 arguments
 
   // The system call number is stored in the first argument
@@ -201,7 +203,6 @@ sys_create (const char *file, unsigned initial_size)
   if (file == NULL || !is_valid_uaddr (file))
     sys_exit (-1);
 
-
   return filesys_create (file, initial_size);
 }
 
@@ -214,7 +215,6 @@ sys_remove (const char *file)
 {
   if (file == NULL || !is_valid_uaddr (file))
     sys_exit (-1);
-
 
   return filesys_remove (file);
 }
@@ -233,19 +233,18 @@ sys_open (const char *file)
 
   if (file == NULL || !is_valid_uaddr (file))
     {
-      lock_acquire (&file_lock);
+      lock_release (&file_lock); // 🧠 project3/vm: release the lock before exiting
       sys_exit (-1);
     }
 
   file_ = filesys_open (file);
   if (file_ == NULL)
     {
-      lock_acquire (&file_lock);
+      lock_release (&file_lock); // 🧠 project3/vm: release the lock before exiting
       return -1;
     }
 
-  if (thread_current ()->pcb->exec_file && (strcmp (thread_current ()->name,
-  file) == 0))
+  if (thread_current ()->pcb->exec_file && (strcmp (thread_current ()->name, file) == 0)) 
     file_deny_write (file_);
 
   t->pcb->fd_table[t->pcb->fd_count++] = file_;
@@ -305,28 +304,30 @@ sys_write (int fd, const void *buffer, unsigned size)
 {
   int fd_count = thread_current ()->pcb->fd_count;
   if (fd >= fd_count || fd < 1)
-  {
-    sys_exit (-1);
-  } else if (fd == 1)
-  {
-    lock_acquire (&file_lock);
-    putbuf(buffer, size);
-    lock_release (&file_lock);
-    return size;
-  } else
-  {
-    int bytes_written;
-    struct file *file = thread_current ()->pcb->fd_table[fd];
-
-    if (file == NULL)
+    {
       sys_exit (-1);
+    }
+  else if (fd == 1)
+    {
+      lock_acquire (&file_lock);
+      putbuf(buffer, size);
+      lock_release (&file_lock);
+      return size;
+    }
+  else
+    {
+      int bytes_written;
+      struct file *file = thread_current ()->pcb->fd_table[fd];
 
-    lock_acquire (&file_lock);
-    bytes_written = file_write (file, buffer, size);
-    lock_release (&file_lock);
+      if (file == NULL)
+        sys_exit (-1);
 
-    return bytes_written;
-  }
+      lock_acquire (&file_lock);
+      bytes_written = file_write (file, buffer, size);
+      lock_release (&file_lock);
+
+      return bytes_written;
+    }
 
   return -1;
 }
