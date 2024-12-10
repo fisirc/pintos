@@ -17,6 +17,7 @@
 #include "threads/palloc.h"
 #include "threads/thread.h"
 #include "threads/vaddr.h"
+#include "devices/timer.h"
 
 static thread_func start_process NO_RETURN;
 static bool load (const char *cmdline, void (**eip) (void), void **esp);
@@ -28,7 +29,7 @@ static bool load (const char *cmdline, void (**eip) (void), void **esp);
 tid_t
 process_execute (const char *file_name)
 {
-  char *fn_copy;
+  char *fn_copy, *fn_cmd;
   tid_t tid;
 
   /* Make a copy of FILE_NAME.
@@ -38,8 +39,22 @@ process_execute (const char *file_name)
     return TID_ERROR;
   strlcpy (fn_copy, file_name, PGSIZE);
 
+  fn_cmd = palloc_get_page (0);
+  if (fn_cmd == NULL)
+    return TID_ERROR;
+  strlcpy (fn_cmd, file_name, PGSIZE);
+
   /* Create a new thread to execute FILE_NAME. */
-  tid = thread_create (file_name, PRI_DEFAULT, start_process, fn_copy);
+  // 👤 project2/userprog
+  // parsed_fn: constains command and arguments
+  // e.g. "echo x y z"
+  // with strtok_r, we transform the first space into a null character
+  // so we can get the command separated from the arguments
+  // parsed_fn will become "echo\0"
+  char *save_ptr;
+  strtok_r (fn_cmd, " ", &save_ptr);
+
+  tid = thread_create (fn_cmd, PRI_DEFAULT, start_process, fn_copy);
   if (tid == TID_ERROR)
     palloc_free_page (fn_copy);
   return tid;
@@ -59,7 +74,15 @@ start_process (void *file_name_)
   if_.gs = if_.fs = if_.es = if_.ds = if_.ss = SEL_UDSEG;
   if_.cs = SEL_UCSEG;
   if_.eflags = FLAG_IF | FLAG_MBS;
-  success = load (file_name, &if_.eip, &if_.esp);
+
+  // 👤 project2/userprog
+  // Allocate memory for arguments
+  char **argv = palloc_get_page(0);
+  int argc = process_parse_cmd(file_name, argv);
+  success = load (argv[0], &if_.eip, &if_.esp);
+  if (success)
+    process_init_stack_args (argv, argc, &if_.esp);
+  palloc_free_page (argv);
 
   /* If load failed, quit. */
   palloc_free_page (file_name);
@@ -88,8 +111,7 @@ start_process (void *file_name_)
 int
 process_wait (tid_t child_tid UNUSED)
 {
-  while (69);
-
+  timer_msleep (300);
   return -1;
 }
 
@@ -133,7 +155,98 @@ process_activate (void)
      interrupts. */
   tss_update ();
 }
-
+
+/*👤 project2/userprog
+  Tokenize the command string into invididual words
+  argv[0] will contain the command
+  argv[n] will contain the nth argument
+*/
+int
+process_parse_cmd (char *cmd, char **argv)
+{
+  char *token, *save_ptr;
+  int argc = 0;
+
+  for (
+    token = strtok_r (cmd, " ", &save_ptr);
+    token != NULL;
+    token = strtok_r (NULL, " ", &save_ptr), argc++
+  )
+    {
+      argv[argc] = token;
+    }
+
+  return argc;
+}
+
+/* 👤 project2/userprog
+   Initializes the stack with the arguments
+   argc: number of arguments
+   argv: array of [argc] arguments
+   esp: stack pointer
+
+   This works by pushing the arguments into the stack following the
+   argument passing convention starting from the top.
+
+   f (1, 2, 3)
+
+                                +----------------+
+                     0xbffffe7c |        3       |
+                     0xbffffe78 |        2       |
+                     0xbffffe74 |        1       |
+   stack pointer --> 0xbffffe70 | return address |
+                                +----------------+ */
+void
+process_init_stack_args (char **argv, int argc, void **esp)
+{
+  // First we push the arguments data one by one, separated by sentinel
+  // null characters
+  int i;
+  int argv_len;
+  int len;
+
+  for (i = argc - 1, argv_len = 0; i >= 0; i--)
+    {
+      len = strlen (argv[i]) + 1; // plus \0
+      *esp -= len;
+      argv_len += len;
+      strlcpy (*esp, argv[i], len);
+      argv[i] = *esp;
+    }
+
+  // And we align the data to 4 bytes as required by the convention
+  if (argv_len % 4 != 0)
+    {
+      *esp -= 4 - (argv_len % 4);
+    }
+
+  /* Now we start with the argv pointers */
+
+  // As defined by the C standard, argv[argc] must be null
+  *esp -= 4;
+  **(uint32_t **)esp = 0;
+
+  // And we push the pointers one by one, in reverse order
+  for(i = argc - 1; i >= 0; i--)
+    {
+      *esp -= 4;
+      **(uint32_t **)esp = argv[i];
+    }
+
+  // Then argv (the address of argv[0])
+  *esp -= 4;
+  **(uint32_t **)esp = *esp + 4;
+
+  // Then argc
+  *esp -= 4;
+  **(uint32_t **)esp = argc;
+
+  // And finally a fake return address
+  *esp -= 4;
+  **(uint32_t **)esp = 0;
+}
+
+
 /* We load ELF binaries.  The following definitions are taken
    from the ELF specification, [ELF1], more-or-less verbatim.  */
 
@@ -198,10 +311,6 @@ struct Elf32_Phdr
 #define PF_R 4          /* Readable. */
 
 static bool setup_stack (void **esp);
-/* 👤 project2/userprog
-   We add the [push_prog_arguments] function to push the program arguments
-   to the stack before executing it */
-static bool push_prog_arguments (char* parse, void **esp);
 static bool validate_segment (const struct Elf32_Phdr *, struct file *);
 static bool load_segment (struct file *file, off_t ofs, uint8_t *upage,
                           uint32_t read_bytes, uint32_t zero_bytes,
@@ -321,7 +430,7 @@ load (const char *file_name, void (**eip) (void), void **esp)
   file_close (file);
   return success;
 }
-
+
 /* load() helpers. */
 
 static bool install_page (void *upage, void *kpage, bool writable);
@@ -448,14 +557,6 @@ setup_stack (void **esp)
         palloc_free_page (kpage);
     }
   return success;
-}
-
-/* 👤 project2/userprog
-   We add the [push_prog_arguments] function to push the program arguments
-   to the stack before executing it */
-static bool
-push_prog_arguments (char* parse, void **esp) {
-  // noop
 }
 
 /* Adds a mapping from user virtual address UPAGE to kernel
