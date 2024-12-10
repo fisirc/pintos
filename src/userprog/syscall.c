@@ -86,6 +86,7 @@ syscall_handler (struct intr_frame *f)
   switch (*(int *)f->esp)
   {
     case SYS_HALT:
+      sys_halt ();
       break;
 
     case SYS_EXIT:
@@ -128,7 +129,7 @@ syscall_handler (struct intr_frame *f)
 void
 sys_halt (void)
 {
-
+  shutdown_power_off ();
 }
 
 /* 👤 project2/userprog
