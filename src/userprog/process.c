@@ -17,6 +17,7 @@
 #include "threads/palloc.h"
 #include "threads/thread.h"
 #include "threads/vaddr.h"
+#include "vm/page.h"
 
 static thread_func start_process NO_RETURN;
 static bool load (const char *cmdline, void (**eip) (void), void **esp);
@@ -143,6 +144,10 @@ process_exit (void)
   struct thread *cur = thread_current ();
   uint32_t *pd;
   int i;
+
+  // 🧠 project3/vm
+  destroy_spt (&cur->spt);
+  file_close (cur->pcb->exec_file);
 
   // 👤 project2/userprog
   for (i = cur->pcb->fd_count - 1; i > 1; i--)
@@ -454,7 +459,12 @@ load (const char *file_name, void (**eip) (void), void **esp)
 
  done:
   /* We arrive here whether the load is successful or not. */
-  file_close (file);
+  // 🧠 project3/vm
+  // Instead of closing the file here, we will close it in process_exit
+  // We only cleanup on error
+  if (!success)
+    file_close (file);
+
   return success;
 }
 
@@ -558,10 +568,15 @@ load_segment (struct file *file, off_t ofs, uint8_t *upage,
           return false;
         }
 
+      // 🧠 project3/vm
+      init_file_spte (&thread_current ()->spt, upage, file, ofs, page_read_bytes, page_zero_bytes, writable);
+
       /* Advance. */
       read_bytes -= page_read_bytes;
       zero_bytes -= page_zero_bytes;
       upage += PGSIZE;
+      // 🧠 project3/vm
+      ofs += page_read_bytes;
     }
   return true;
 }
@@ -574,14 +589,25 @@ setup_stack (void **esp)
   uint8_t *kpage;
   bool success = false;
 
-  kpage = palloc_get_page (PAL_USER | PAL_ZERO);
+  // 🧠 project3/vm
+  // We need to allocate a page for the stack
+  kpage = falloc_get_page (PAL_USER | PAL_ZERO, PHYS_BASE - PGSIZE);
   if (kpage != NULL)
     {
       success = install_page (((uint8_t *) PHYS_BASE) - PGSIZE, kpage, true);
       if (success)
-        *esp = PHYS_BASE - 12;
+        {
+          // 🧠 project3/vm
+          // We need to initialize the page table entry for the stack
+          init_frame_spte (&thread_current ()->spt, PHYS_BASE - PGSIZE, kpage);
+          *esp = PHYS_BASE;
+        }
       else
-        palloc_free_page (kpage);
+        {
+          // 🧠 project3/vm
+          // We need to free the page if we fail to install it
+          falloc_free_page (kpage);
+        }
     }
   return success;
 }
