@@ -19,6 +19,10 @@ Operating Systems — National University of San Marcos
 > preparing your submission, other than the Pintos documentation, course
 > text, lecture notes, and course staff.
 
+- <https://en.wikipedia.org/wiki/Page_table>
+- <https://courses.cs.vt.edu/cs5204/fall15-gback/lectures/Project3Help.pdf>
+- Starting with Project 3 by Tahmid Haque <https://www.youtube.com/watch?v=PVKZkkiyXD0>
+
 ## Page Table Management
 
 ### Data Structures
